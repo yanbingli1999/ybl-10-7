@@ -26,7 +26,19 @@ import {
   NOTES_SUCCESS,
   NOTES_FAIL,
   DISEASE_NAMES,
+  CURSE_SYMBOLS,
+  CURSE_SYMPTOMS_EXTRA,
+  RITUAL_HOURS,
+  STAFF_POSITIONS,
+  NEGATIVE_EVENTS,
+  CURSE_RITUAL_REQUIREMENT,
 } from "@/data/gameData";
+import type {
+  CurseRitualState,
+  RitualHour,
+  StaffPosition,
+  NegativeEvent,
+} from "@/types/game";
 
 const DISEASE_TYPES: DiseaseType[] = [
   "fever", "cold", "poisoning", "fatigue", "fracture",
@@ -54,7 +66,7 @@ function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-export function generateRandomBeast(day: number, time: number): Beast {
+export function generateRandomBeast(day: number, time: number): Beast & { curseSymbolId?: string; extraSymptoms?: string[] } {
   const breed = rand(BREEDS.filter(b => b.rarity <= Math.min(5, 2 + Math.floor(day / 5))));
   const disease = rand(DISEASE_TYPES);
   const sevIdx = Math.min(3, Math.floor(Math.random() * Math.min(4, 1 + Math.floor(day / 4))));
@@ -66,7 +78,8 @@ export function generateRandomBeast(day: number, time: number): Beast {
     const s = rand(allSyms);
     if (!picked.includes(s)) picked.push(s);
   }
-  return {
+
+  const beast: Beast & { curseSymbolId?: string; extraSymptoms?: string[] } = {
     id: uid("beast"),
     breedId: breed.id,
     name: rand(BEAST_NAMES),
@@ -81,6 +94,20 @@ export function generateRandomBeast(day: number, time: number): Beast {
     ownerName: rand(OWNER_NAMES),
     arrivedAt: time,
   };
+
+  if (disease === "curse") {
+    beast.curseSymbolId = rand(CURSE_SYMBOLS).id;
+    const extraSymCount = randomInt(1, 2);
+    const extraSyms: string[] = [];
+    while (extraSyms.length < extraSymCount) {
+      const s = rand(CURSE_SYMPTOMS_EXTRA);
+      if (!extraSyms.includes(s)) extraSyms.push(s);
+    }
+    beast.extraSymptoms = extraSyms;
+    beast.symptoms = [...beast.symptoms, ...extraSyms];
+  }
+
+  return beast;
 }
 
 function calcTreatmentHours(severity: Severity, staffBoost: boolean): number {
@@ -119,6 +146,10 @@ export interface GameState {
   selectedBeastId: string | null;
   selectedBedId: string | null;
   lastBeastSpawn: number;
+  collectedSymbols: string[];
+  curseRitual: CurseRitualState;
+  bedDisabledUntil: Record<string, number>;
+  activeNegativeEvents: NegativeEvent[];
 
   // Actions
   togglePause: () => void;
@@ -127,6 +158,12 @@ export interface GameState {
   selectBed: (id: string | null) => void;
   dismissBeast: (id: string) => void;
   assignBedAndTreat: (beastId: string, bedId: string, staffId: string | null, herbIds: string[], playerDiagnosis: DiseaseType | null) => void;
+  assignBedAndSuppressCurse: (beastId: string, bedId: string, staffId: string | null, herbIds: string[], playerDiagnosis: DiseaseType | null) => void;
+  startCurseRitual: (beastId: string, bedId: string) => void;
+  setupCurseRitual: (symbols: string[], hour: RitualHour, positions: Record<string, StaffPosition>) => void;
+  collectCurseSymbol: (symbolId: string, recordId: string) => void;
+  completeCurseRitual: (success: boolean) => void;
+  triggerNegativeEvent: (event?: NegativeEvent) => void;
   purchaseHerb: (herbId: string, qty: number) => void;
   collectFromBed: (bedId: string) => void;
   addNotification: (type: Notification["type"], message: string) => void;
@@ -182,6 +219,21 @@ function buildInitialState() {
     selectedBeastId: null,
     selectedBedId: null,
     lastBeastSpawn: 8,
+    collectedSymbols: [] as string[],
+    curseRitual: {
+      isActive: false,
+      beastId: null,
+      bedId: null,
+      selectedSymbols: [],
+      selectedHour: null,
+      staffPositions: {},
+      progress: 0,
+      total: 0,
+      result: "pending",
+      startedAt: null,
+    } as CurseRitualState,
+    bedDisabledUntil: {} as Record<string, number>,
+    activeNegativeEvents: [] as NegativeEvent[],
   };
 }
 
@@ -329,6 +381,373 @@ export const useGameStore = create<GameState>()(
         }));
         get()._addTransaction("expense", "药材消耗", herbsCost, `${beast.name} 治疗消耗药材`);
         get().addNotification("info", `${beast.name} 已入住 ${bed.name}，预计${totalHours}小时治疗`);
+      },
+
+      assignBedAndSuppressCurse: (beastId, bedId, staffId, herbIds, playerDiagnosis) => {
+        const s = get();
+        const beast = s.waitingQueue.find(b => b.id === beastId);
+        const bed = s.beds.find(b => b.id === bedId);
+        if (!beast || !bed || bed.status !== "empty") {
+          s.addNotification("error", "分配失败：灵兽或床位不可用");
+          return;
+        }
+        for (const hid of herbIds) {
+          if ((s.inventory[hid] ?? 0) < 1) {
+            s.addNotification("error", `药材不足`);
+            return;
+          }
+        }
+        if (staffId) {
+          const st = s.staff.find(x => x.id === staffId);
+          if (!st || st.status !== "idle") {
+            s.addNotification("error", "该护理员当前不可用");
+            return;
+          }
+        }
+
+        const newInventory = { ...s.inventory };
+        herbIds.forEach(hid => { newInventory[hid] = (newInventory[hid] ?? 0) - 1; });
+        const herbsCost = herbIds.reduce((sum, hid) => {
+          const h = HERBS.find(x => x.id === hid);
+          return sum + (h?.price ?? 0);
+        }, 0);
+
+        const hasStaff = !!staffId;
+        const totalHours = calcTreatmentHours(beast.severity, hasStaff);
+
+        const newBeds = s.beds.map(b => b.id === bedId ? {
+          ...b,
+          status: "occupied" as const,
+          assignedBeastId: beastId,
+          assignedStaffId: staffId,
+          treatmentProgress: 0,
+          treatmentTotal: totalHours,
+          result: "pending" as const,
+          currentPrescriptionHerbs: [...herbIds],
+          playerDiagnosis,
+          startedAt: s.currentTime,
+          beastSnapshot: {
+            id: beast.id,
+            breedId: beast.breedId,
+            name: beast.name,
+            disease: beast.disease,
+            severity: beast.severity,
+            satisfaction: beast.satisfaction,
+            symptoms: beast.symptoms,
+          },
+        } : b);
+
+        const newStaff = s.staff.map(st => st.id === staffId ? { ...st, status: "working" as const, assignedBedId: bedId } : st);
+
+        const newDiscovered = s.discoveredBreeds.includes(beast.breedId)
+          ? s.discoveredBreeds : [...s.discoveredBreeds, beast.breedId];
+
+        const beastWithCurse = beast as Beast & { curseSymbolId?: string };
+        const record: MedicalRecord = {
+          id: uid("rec"),
+          beastId: beast.id,
+          breedId: beast.breedId,
+          beastName: beast.name,
+          date: `第${s.currentDay}天`,
+          disease: beast.disease,
+          severity: beast.severity,
+          prescriptions: herbIds,
+          success: true,
+          revenue: 0,
+          daysToHeal: 1,
+          evolved: false,
+          notes: "咒怨症症状已暂时压制，需进行祛咒仪式才能根治。",
+          curseSymbolId: beastWithCurse.curseSymbolId,
+          isCurseSuppressed: true,
+        };
+
+        set(st => ({
+          waitingQueue: st.waitingQueue.filter(b => b.id !== beastId),
+          beds: newBeds,
+          staff: newStaff,
+          inventory: newInventory,
+          money: st.money - herbsCost,
+          discoveredBreeds: newDiscovered,
+          selectedBeastId: null,
+          medicalRecords: [record, ...st.medicalRecords],
+        }));
+        get()._addTransaction("expense", "药材消耗", herbsCost, `${beast.name} 咒怨压制消耗药材`);
+        get().addNotification("warning", `${beast.name} 咒怨症状已暂时压制！请从病历中收集异常符号，准备祛咒仪式。`);
+      },
+
+      startCurseRitual: (beastId, bedId) => {
+        const s = get();
+        if (s.curseRitual.isActive) {
+          s.addNotification("error", "已有祛咒仪式正在进行中");
+          return;
+        }
+        const bed = s.beds.find(b => b.id === bedId);
+        if (!bed || bed.status !== "empty") {
+          s.addNotification("error", "床位不可用");
+          return;
+        }
+        set(st => ({
+          curseRitual: {
+            ...st.curseRitual,
+            isActive: true,
+            beastId,
+            bedId,
+            selectedSymbols: [],
+            selectedHour: null,
+            staffPositions: {},
+            progress: 0,
+            total: CURSE_RITUAL_REQUIREMENT.ritualHours,
+            result: "pending",
+            startedAt: st.currentTime,
+          },
+          selectedBeastId: beastId,
+          selectedBedId: bedId,
+        }));
+        s.addNotification("info", "祛咒仪式已启动，请选择仪式符号、时辰和护理员站位。");
+      },
+
+      setupCurseRitual: (symbols, hour, positions) => {
+        const s = get();
+        if (!s.curseRitual.isActive) return;
+
+        const bed = s.beds.find(b => b.id === s.curseRitual.bedId);
+        if (!bed || bed.status !== "empty") {
+          s.addNotification("error", "床位不可用");
+          return;
+        }
+
+        const requiredHerbs = CURSE_RITUAL_REQUIREMENT.requiredHerbs;
+        for (const hid of requiredHerbs) {
+          if ((s.inventory[hid] ?? 0) < 1) {
+            s.addNotification("error", `药材不足：需要圣光草、净灵花、赤炎花各1份`);
+            return;
+          }
+        }
+
+        const newInventory = { ...s.inventory };
+        requiredHerbs.forEach(hid => { newInventory[hid] = (newInventory[hid] ?? 0) - 1; });
+        const herbsCost = requiredHerbs.reduce((sum, hid) => {
+          const h = HERBS.find(x => x.id === hid);
+          return sum + (h?.price ?? 0);
+        }, 0);
+
+        const staffIds = Object.keys(positions);
+        const newStaff = s.staff.map(st => {
+          if (staffIds.includes(st.id)) {
+            return { ...st, status: "working" as const, assignedBedId: s.curseRitual.bedId };
+          }
+          return st;
+        });
+
+        const queueBeast = s.waitingQueue.find(b => b.id === s.curseRitual.beastId);
+        const newBeds = s.beds.map(b => b.id === s.curseRitual.bedId ? {
+          ...b,
+          status: "occupied" as const,
+          assignedBeastId: s.curseRitual.beastId,
+          assignedStaffId: staffIds[0] || null,
+          treatmentProgress: 0,
+          treatmentTotal: CURSE_RITUAL_REQUIREMENT.ritualHours,
+          result: "pending" as const,
+          currentPrescriptionHerbs: requiredHerbs,
+          playerDiagnosis: "curse" as DiseaseType,
+          startedAt: s.currentTime,
+          beastSnapshot: queueBeast ? {
+            id: queueBeast.id,
+            breedId: queueBeast.breedId,
+            name: queueBeast.name,
+            disease: queueBeast.disease,
+            severity: queueBeast.severity,
+            satisfaction: queueBeast.satisfaction,
+            symptoms: queueBeast.symptoms,
+          } : null,
+        } : b);
+
+        const newQueue = queueBeast ? s.waitingQueue.filter(b => b.id !== s.curseRitual.beastId) : s.waitingQueue;
+
+        set(st => ({
+          inventory: newInventory,
+          money: st.money - herbsCost,
+          staff: newStaff,
+          beds: newBeds,
+          waitingQueue: newQueue,
+          curseRitual: {
+            ...st.curseRitual,
+            selectedSymbols: symbols,
+            selectedHour: hour,
+            staffPositions: positions,
+          },
+          selectedBeastId: null,
+          selectedBedId: null,
+        }));
+
+        get()._addTransaction("expense", "仪式消耗", herbsCost, `祛咒仪式消耗药材`);
+        get().addNotification("info", `祛咒仪式开始！预计${CURSE_RITUAL_REQUIREMENT.ritualHours}小时后完成。`);
+      },
+
+      collectCurseSymbol: (symbolId, recordId) => {
+        const s = get();
+        if (s.collectedSymbols.includes(symbolId)) {
+          s.addNotification("warning", "该符号已收集过");
+          return;
+        }
+
+        const symbol = CURSE_SYMBOLS.find(sym => sym.id === symbolId);
+        if (!symbol) return;
+
+        set(st => ({
+          collectedSymbols: [...st.collectedSymbols, symbolId],
+          medicalRecords: st.medicalRecords.map(r =>
+            r.id === recordId ? { ...r, curseSymbolId: undefined } : r
+          ),
+        }));
+        s.addNotification("success", `已收集异常符号：${symbol.emoji} ${symbol.name}！`);
+      },
+
+      completeCurseRitual: (success) => {
+        const s = get();
+        if (!s.curseRitual.isActive) return;
+
+        const bedId = s.curseRitual.bedId;
+        const bed = s.beds.find(b => b.id === bedId);
+        if (!bed || !bed.beastSnapshot) return;
+
+        const beast = bed.beastSnapshot;
+        const breed = BREEDS.find(b => b.id === beast.breedId);
+
+        if (success && breed) {
+          const severityMult = { mild: 1.5, moderate: 2, severe: 2.5, critical: 3 }[beast.severity] || 1.5;
+          const satMult = beast.satisfaction / 100;
+          const reputationBonus = s.reputation / 100;
+          const revenue = Math.floor(breed.baseFees * severityMult * (1 + 0.5 * satMult) * (1 + reputationBonus * 0.5));
+          const repGain = Math.ceil(8 * severityMult * satMult);
+          const trustGain = Math.ceil(20 * severityMult * satMult);
+
+          let evolved = false;
+          const prevRel = s.beastRelationships[breed.id];
+          const prevVisits = prevRel?.visits ?? 0;
+          const prevTrust = prevRel?.trust ?? 0;
+          const newVisits = prevVisits + 1;
+          const newTrust = prevTrust + trustGain;
+          const nextStage = Math.floor(newTrust / 25);
+          if (nextStage > (prevRel?.highestStage ?? 0) && breed.evolutionEmojis[nextStage]) {
+            evolved = true;
+          }
+
+          const notes = "祛咒仪式成功！诅咒已被彻底根除，灵兽恢复健康。";
+          const record: MedicalRecord = {
+            id: uid("rec"),
+            beastId: beast.id,
+            breedId: breed.id,
+            beastName: beast.name,
+            date: `第${s.currentDay}天`,
+            disease: beast.disease,
+            severity: beast.severity,
+            prescriptions: CURSE_RITUAL_REQUIREMENT.requiredHerbs,
+            success: true,
+            revenue,
+            daysToHeal: 1,
+            evolved,
+            notes: evolved ? `${notes} 灵兽发生了进化！` : notes,
+          };
+
+          const newRel: BeastRelationship = {
+            breedId: breed.id,
+            trust: newTrust,
+            visits: newVisits,
+            evolved: evolved || prevRel?.evolved || false,
+            highestStage: Math.max(nextStage, prevRel?.highestStage ?? 0),
+          };
+
+          set(st => ({
+            money: st.money + revenue,
+            reputation: Math.min(100, st.reputation + repGain),
+            beastRelationships: { ...st.beastRelationships, [breed.id]: newRel },
+            medicalRecords: [record, ...st.medicalRecords],
+          }));
+          get()._addTransaction("income", "祛咒收入", revenue, `祛咒成功 治愈 ${breed.name}·${beast.name}${evolved ? "(进化加成)" : ""}`);
+          const evolveMsg = evolved ? " 🎉灵兽发生进化！额外获得加成！" : "";
+          get().addNotification("success", `✨ 祛咒仪式成功！获得 ${revenue} 金，声望+${repGain}，亲密度+${trustGain}${evolveMsg}`);
+        } else {
+          get().triggerNegativeEvent();
+        }
+
+        const staffToRelease = Object.keys(s.curseRitual.staffPositions);
+        const newBeds = s.beds.map(b => b.id === bedId ? {
+          ...b,
+          status: "empty" as const,
+          assignedBeastId: null,
+          assignedStaffId: null,
+          treatmentProgress: 0,
+          treatmentTotal: 0,
+          result: "pending" as const,
+          currentPrescriptionHerbs: [],
+          playerDiagnosis: null,
+          startedAt: null,
+          beastSnapshot: null,
+        } : b);
+        const newStaff = s.staff.map(st =>
+          staffToRelease.includes(st.id) ? { ...st, status: "idle" as const, assignedBedId: null } : st
+        );
+
+        set(st => ({
+          beds: newBeds,
+          staff: newStaff,
+          curseRitual: {
+            ...st.curseRitual,
+            isActive: false,
+            beastId: null,
+            bedId: null,
+            selectedSymbols: [],
+            selectedHour: null,
+            staffPositions: {},
+            progress: 0,
+            total: 0,
+            result: "pending",
+            startedAt: null,
+          },
+          selectedBedId: null,
+        }));
+      },
+
+      triggerNegativeEvent: (event) => {
+        const s = get();
+        const selectedEvent = event || rand(NEGATIVE_EVENTS);
+        const effect = selectedEvent.effect;
+
+        let newMoney = s.money;
+        let newReputation = s.reputation;
+        let newInventory = { ...s.inventory };
+        let newBedDisabled = { ...s.bedDisabledUntil };
+
+        if (effect.money) {
+          newMoney = Math.max(0, newMoney + effect.money);
+        }
+        if (effect.reputation) {
+          newReputation = Math.max(0, newReputation + effect.reputation);
+        }
+        if (effect.inventoryLoss) {
+          for (const [hid, qty] of Object.entries(effect.inventoryLoss)) {
+            newInventory[hid] = Math.max(0, (newInventory[hid] ?? 0) - qty);
+          }
+        }
+        if (effect.allBedDisableHours) {
+          s.beds.forEach(b => {
+            newBedDisabled[b.id] = s.currentTime + effect.allBedDisableHours!;
+          });
+        }
+
+        set(st => ({
+          money: newMoney,
+          reputation: newReputation,
+          inventory: newInventory,
+          bedDisabledUntil: newBedDisabled,
+          activeNegativeEvents: [...st.activeNegativeEvents, selectedEvent],
+        }));
+
+        get().addNotification("error", `💀 祛咒仪式失败！触发负面事件：${selectedEvent.name} - ${selectedEvent.description}`);
+        if (effect.money) {
+          get()._addTransaction("expense", "诅咒反噬", Math.abs(effect.money), `${selectedEvent.name}：${selectedEvent.description}`);
+        }
       },
 
       collectFromBed: (bedId) => {
@@ -548,30 +967,100 @@ export const useGameStore = create<GameState>()(
           // 2. 治疗进度
           const newBeds = state.beds.map(b => {
             if (b.status !== "occupied" || b.result !== "pending") return b;
+
+            // 检查床位是否被禁用
+            if (state.bedDisabledUntil[b.id] && state.bedDisabledUntil[b.id] > state.currentTime) {
+              return b;
+            }
+
+            const isCurseRitualBed = state.curseRitual.isActive && state.curseRitual.bedId === b.id;
             const staffBonus = b.assignedStaffId ? 1.3 : 1;
             const newProgress = b.treatmentProgress + staffBonus;
             let result: TreatmentResult = b.result;
+
             if (newProgress >= b.treatmentTotal) {
-              // 判定
-              const herbs = b.currentPrescriptionHerbs;
-              const matchedPresc = PRESCRIPTIONS.find(p =>
-                JSON.stringify([...p.herbIds].sort()) === JSON.stringify([...herbs].sort())
-              );
-              let finalRate = matchedPresc ? matchedPresc.successRate : 30;
-              // 员工加成
-              if (b.assignedStaffId) {
-                const stf = state.staff.find(x => x.id === b.assignedStaffId);
-                finalRate += (stf?.skillLevel ?? 1) * 5;
+              if (isCurseRitualBed && state.curseRitual.selectedSymbols.length > 0) {
+                // 祛咒仪式判定
+                let finalRate = CURSE_RITUAL_REQUIREMENT.baseSuccessRate;
+
+                // 符号加成
+                const selectedSymbols = state.curseRitual.selectedSymbols;
+                selectedSymbols.forEach(symId => {
+                  const sym = CURSE_SYMBOLS.find(s => s.id === symId);
+                  if (sym) {
+                    finalRate += sym.rarity * 5;
+                  }
+                });
+
+                // 时辰加成
+                if (state.curseRitual.selectedHour) {
+                  const hourBonus = RITUAL_HOURS[state.curseRitual.selectedHour]?.bonus ?? 0;
+                  finalRate += hourBonus;
+                }
+
+                // 站位加成
+                const positions = Object.values(state.curseRitual.staffPositions);
+                positions.forEach(pos => {
+                  const posBonus = STAFF_POSITIONS[pos]?.bonus ?? 0;
+                  finalRate += posBonus;
+                });
+
+                // 护理员技能加成
+                Object.keys(state.curseRitual.staffPositions).forEach(staffId => {
+                  const stf = state.staff.find(x => x.id === staffId);
+                  if (stf) finalRate += stf.skillLevel * 3;
+                });
+
+                // 疾病严重度减成
+                const sev = b.beastSnapshot?.severity ?? "mild";
+                const sevDebuff = { mild: 0, moderate: -5, severe: -10, critical: -15 }[sev] || 0;
+                finalRate = Math.max(10, Math.min(95, finalRate + sevDebuff));
+
+                result = Math.random() * 100 <= finalRate ? "success" : "fail";
+
+                // 延迟调用completeCurseRitual
+                setTimeout(() => {
+                  get().completeCurseRitual(result === "success");
+                }, 100);
+              } else {
+                // 普通治疗判定
+                const herbs = b.currentPrescriptionHerbs;
+                const matchedPresc = PRESCRIPTIONS.find(p =>
+                  JSON.stringify([...p.herbIds].sort()) === JSON.stringify([...herbs].sort())
+                );
+
+                // 咒怨症特殊处理：普通药材只能压制，不能根治
+                const isCurseDisease = b.beastSnapshot?.disease === "curse";
+                if (isCurseDisease) {
+                  // 咒怨症普通治疗总是"成功"但只是压制
+                  result = "success";
+                } else {
+                  let finalRate = matchedPresc ? matchedPresc.successRate : 30;
+                  // 员工加成
+                  if (b.assignedStaffId) {
+                    const stf = state.staff.find(x => x.id === b.assignedStaffId);
+                    finalRate += (stf?.skillLevel ?? 1) * 5;
+                  }
+                  // 疾病严重度减成
+                  const sev = b.beastSnapshot?.severity ?? "mild";
+                  const sevDebuff = { mild: 0, moderate: -5, severe: -10, critical: -15 }[sev] || 0;
+                  finalRate = Math.max(5, Math.min(98, finalRate + sevDebuff));
+                  result = Math.random() * 100 <= finalRate ? "success" : "fail";
+                }
               }
-              // 疾病严重度减成
-              const sev = b.beastSnapshot?.severity ?? "mild";
-              const sevDebuff = { mild: 0, moderate: -5, severe: -10, critical: -15 }[sev] || 0;
-              finalRate = Math.max(5, Math.min(98, finalRate + sevDebuff));
-              result = Math.random() * 100 <= finalRate ? "success" : "fail";
             }
             return { ...b, treatmentProgress: Math.min(newProgress, b.treatmentTotal), result };
           });
           state.beds = newBeds;
+
+          // 2.5 床位禁用恢复检查
+          const newBedDisabled = { ...state.bedDisabledUntil };
+          for (const [bedId, until] of Object.entries(newBedDisabled)) {
+            if (until <= state.currentTime) {
+              delete newBedDisabled[bedId];
+            }
+          }
+          state.bedDisabledUntil = newBedDisabled;
 
           // 3. 新灵兽生成
           if (!dayPassed && newTime >= 8 && newTime < 21) {

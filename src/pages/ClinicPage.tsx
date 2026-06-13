@@ -3,6 +3,7 @@ import { WaitingQueue } from "@/components/WaitingQueue";
 import { BedGrid } from "@/components/BedGrid";
 import { InventoryPanel } from "@/components/InventoryPanel";
 import { TreatmentModal } from "@/components/TreatmentModal";
+import { CurseRitualModal } from "@/components/CurseRitualModal";
 import { useGameStore } from "@/store/gameStore";
 import type { Bed } from "@/types/game";
 import { useGameLoop } from "@/hooks/useGameLoop";
@@ -10,14 +11,23 @@ import { useGameLoop } from "@/hooks/useGameLoop";
 export default function ClinicPage() {
   useGameLoop();
   const [modalOpen, setModalOpen] = useState(false);
+  const [ritualModalOpen, setRitualModalOpen] = useState(false);
   const selectedBeastId = useGameStore(s => s.selectedBeastId);
   const selectedBedId = useGameStore(s => s.selectedBedId);
   const beds = useGameStore(s => s.beds);
+  const curseRitual = useGameStore(s => s.curseRitual);
 
   const targetBed: Bed | null = selectedBedId ? beds.find(b => b.id === selectedBedId) ?? null : null;
 
   const handleBedClick = (bed: Bed) => {
     if (bed.status !== "empty") return;
+
+    // 如果祛咒仪式已启动且选择了床位，打开祛咒仪式模态框
+    if (curseRitual.isActive && curseRitual.bedId === bed.id) {
+      setRitualModalOpen(true);
+      return;
+    }
+
     // If a beast is selected, open modal directly with this bed
     if (selectedBeastId) {
       setModalOpen(true);
@@ -70,6 +80,13 @@ export default function ClinicPage() {
           useGameStore.getState().selectBed(null);
         }}
         targetBed={targetBed}
+      />
+
+      <CurseRitualModal
+        open={ritualModalOpen && curseRitual.isActive}
+        onClose={() => {
+          setRitualModalOpen(false);
+        }}
       />
     </div>
   );

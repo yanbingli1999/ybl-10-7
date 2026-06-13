@@ -1,10 +1,12 @@
 import { useMemo, useState, useEffect } from "react";
-import { X, Stethoscope, Pill, Users, ArrowRight, AlertCircle, Sparkles, Brain, ChevronDown } from "lucide-react";
+import { X, Stethoscope, Pill, Users, ArrowRight, AlertCircle, Sparkles, Brain, ChevronDown, Moon } from "lucide-react";
 import { useGameStore, guessDiseaseFromSymptoms } from "@/store/gameStore";
 import {
   BREEDS, HERBS, PRESCRIPTIONS,
   SEVERITY_NAMES, SEVERITY_COLORS, DISEASE_NAMES,
   ELEMENT_EMOJI, ELEMENT_NAMES,
+  CURSE_SYMBOLS,
+  CURSE_RITUAL_REQUIREMENT,
 } from "@/data/gameData";
 import type { Bed, DiseaseType } from "@/types/game";
 
@@ -33,6 +35,12 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
   const [selectedStaff, setSelectedStaff] = useState<string | null>(null);
   const [playerDiagnosis, setPlayerDiagnosis] = useState<DiseaseType | null>(null);
   const [showAllDiseases, setShowAllDiseases] = useState(false);
+  const [treatmentMode, setTreatmentMode] = useState<"suppress" | "ritual">("suppress");
+
+  const collectedSymbols = useGameStore(s => s.collectedSymbols);
+  const startCurseRitual = useGameStore(s => s.startCurseRitual);
+  const assignBedAndSuppressCurse = useGameStore(s => s.assignBedAndSuppressCurse);
+  const curseRitual = useGameStore(s => s.curseRitual);
 
   const beast = useMemo(() => queue.find(b => b.id === selectedBeastId), [queue, selectedBeastId]);
   const breed = beast ? BREEDS.find(b => b.id === beast.breedId) : null;
@@ -49,6 +57,19 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
     if (!playerDiagnosis) return null;
     return PRESCRIPTIONS.find(p => p.disease === playerDiagnosis) || null;
   }, [playerDiagnosis]);
+
+  const isCurseDisease = useMemo(() => {
+    return beast?.disease === "curse" || playerDiagnosis === "curse";
+  }, [beast, playerDiagnosis]);
+
+  const beastWithCurse = beast as (typeof beast) & { curseSymbolId?: string };
+  const curseSymbol = beastWithCurse?.curseSymbolId
+    ? CURSE_SYMBOLS.find(s => s.id === beastWithCurse.curseSymbolId)
+    : null;
+
+  const hasEnoughSymbols = collectedSymbols.length >= CURSE_RITUAL_REQUIREMENT.minSymbols;
+
+  const canStartRitual = targetBed && isCurseDisease && hasEnoughSymbols && !curseRitual.isActive;
 
   useEffect(() => {
     if (open) {
@@ -89,7 +110,18 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
 
   const handleSubmit = () => {
     if (!canSubmit || !targetBed) return;
-    assignBedAndTreat(beast.id, targetBed.id, selectedStaff, selectedHerbs, playerDiagnosis);
+
+    if (isCurseDisease && treatmentMode === "suppress") {
+      assignBedAndSuppressCurse(beast.id, targetBed.id, selectedStaff, selectedHerbs, playerDiagnosis);
+    } else {
+      assignBedAndTreat(beast.id, targetBed.id, selectedStaff, selectedHerbs, playerDiagnosis);
+    }
+    onClose();
+  };
+
+  const handleStartRitual = () => {
+    if (!canStartRitual || !targetBed) return;
+    startCurseRitual(beast.id, targetBed.id);
     onClose();
   };
 
@@ -152,6 +184,37 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
                 </span>
               ))}
             </div>
+
+            {isCurseDisease && (
+              <div className="mb-3 p-3 rounded-lg bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200">
+                <div className="flex items-center gap-2 mb-2">
+                  <Moon className="w-4 h-4 text-purple-600" />
+                  <span className="text-sm font-semibold text-purple-800">⚠️ 检测到咒怨症</span>
+                </div>
+                <p className="text-xs text-gray-600 mb-2">
+                  普通药材只能暂时压制症状，无法根治。需要进行祛咒仪式才能彻底治愈。
+                </p>
+                {curseSymbol && (
+                  <div className="flex items-center gap-2 p-2 rounded bg-white/50 border border-purple-200">
+                    <span className="text-2xl">{curseSymbol.emoji}</span>
+                    <div>
+                      <div className="text-xs font-medium text-purple-700">发现异常符号：{curseSymbol.name}</div>
+                      <div className="text-[10px] text-gray-500">治疗后可从病历中收集此符号</div>
+                    </div>
+                  </div>
+                )}
+                <div className="mt-3 text-[11px] text-gray-500">
+                  已收集符号：<span className="font-semibold text-purple-700">{collectedSymbols.length}</span> 个
+                  {hasEnoughSymbols ? (
+                    <span className="text-green-600 ml-1">✓ 符号充足，可进行仪式</span>
+                  ) : (
+                    <span className="text-amber-600 ml-1">
+                      (需至少 {CURSE_RITUAL_REQUIREMENT.minSymbols} 个，请从病历中收集)
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="border-t border-clinic-border/30 pt-3">
               <div className="flex items-center gap-1.5 mb-2">
@@ -347,43 +410,125 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
 
         {/* 底部操作栏 */}
         <div className="p-3 border-t border-clinic-border/40 bg-gradient-to-r from-clinic-amber/10 via-white to-clinic-jade/10 flex-shrink-0">
-          <div className="flex items-center gap-2 text-xs mb-2 flex-wrap">
-            <div className="flex items-center gap-1">
-              <Pill className="w-3.5 h-3.5 text-clinic-amber" />
-              <span className="text-gray-600">
-                {selectedHerbs.length > 0
-                  ? selectedHerbs.map(id => HERBS.find(h => h.id === id)?.emoji || "?").join("+")
-                  : "未选药"}
-              </span>
+          {isCurseDisease && (
+            <div className="mb-3">
+              <div className="text-[11px] text-gray-500 mb-2">选择治疗方式：</div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setTreatmentMode("suppress")}
+                  className={`p-2 rounded-lg border-2 transition-all text-left ${
+                    treatmentMode === "suppress"
+                      ? "border-amber-500 bg-amber-50"
+                      : "border-gray-200 bg-white hover:border-amber-300"
+                  }`}
+                >
+                  <div className="text-sm font-medium text-clinic-deep flex items-center gap-1">
+                    <Pill className="w-3.5 h-3.5 text-amber-500" />
+                    药材压制
+                  </div>
+                  <div className="text-[10px] text-gray-500 mt-0.5">
+                    暂时压制症状，不根治
+                  </div>
+                </button>
+                <button
+                  onClick={() => setTreatmentMode("ritual")}
+                  disabled={!canStartRitual}
+                  className={`p-2 rounded-lg border-2 transition-all text-left ${
+                    treatmentMode === "ritual"
+                      ? "border-purple-500 bg-purple-50"
+                      : !canStartRitual
+                      ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed"
+                      : "border-gray-200 bg-white hover:border-purple-300"
+                  }`}
+                >
+                  <div className="text-sm font-medium text-clinic-deep flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-500" />
+                    祛咒仪式
+                  </div>
+                  <div className="text-[10px] text-gray-500 mt-0.5">
+                    {!hasEnoughSymbols
+                      ? `需收集 ${CURSE_RITUAL_REQUIREMENT.minSymbols} 个符号`
+                      : curseRitual.isActive
+                      ? "已有仪式进行中"
+                      : "彻底根除咒怨"}
+                  </div>
+                </button>
+              </div>
             </div>
-            <span className="text-clinic-deep font-semibold tabular-nums ml-auto">
-              💊 {herbsTotal} 金
-            </span>
-            {selectedStaff && (
-              <>
-                <span className="text-gray-300">·</span>
-                <div className="text-gray-600 text-[11px]">
-                  👩‍⚕️ {staff.find(s => s.id === selectedStaff)?.name}
+          )}
+
+          {(!isCurseDisease || treatmentMode === "suppress") && (
+            <>
+              <div className="flex items-center gap-2 text-xs mb-2 flex-wrap">
+                <div className="flex items-center gap-1">
+                  <Pill className="w-3.5 h-3.5 text-clinic-amber" />
+                  <span className="text-gray-600">
+                    {selectedHerbs.length > 0
+                      ? selectedHerbs.map(id => HERBS.find(h => h.id === id)?.emoji || "?").join("+")
+                      : "未选药"}
+                  </span>
                 </div>
-              </>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onClose}
-              className="flex-1 py-2 rounded-lg border-2 border-clinic-border/60 text-gray-600 hover:bg-white/80 transition-colors text-sm"
-            >
-              取消
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={!canSubmit}
-              className="btn-primary flex-1 flex items-center justify-center gap-1.5 disabled:!bg-gray-300 text-sm"
-            >
-              开始治疗
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
+                <span className="text-clinic-deep font-semibold tabular-nums ml-auto">
+                  💊 {herbsTotal} 金
+                </span>
+                {selectedStaff && (
+                  <>
+                    <span className="text-gray-300">·</span>
+                    <div className="text-gray-600 text-[11px]">
+                      👩‍⚕️ {staff.find(s => s.id === selectedStaff)?.name}
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={onClose}
+                  className="flex-1 py-2 rounded-lg border-2 border-clinic-border/60 text-gray-600 hover:bg-white/80 transition-colors text-sm"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleSubmit}
+                  disabled={!canSubmit}
+                  className="btn-primary flex-1 flex items-center justify-center gap-1.5 disabled:!bg-gray-300 text-sm"
+                >
+                  {isCurseDisease ? "开始压制治疗" : "开始治疗"}
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </>
+          )}
+
+          {isCurseDisease && treatmentMode === "ritual" && (
+            <div className="space-y-2">
+              <div className="text-xs text-gray-600 p-2 rounded-lg bg-purple-50 border border-purple-200">
+                <div className="font-medium text-purple-800 mb-1">祛咒仪式说明：</div>
+                <ul className="text-[10px] space-y-0.5 list-disc list-inside text-gray-600">
+                  <li>选择2-4个已收集的异常符号</li>
+                  <li>选择吉时时辰提升成功率</li>
+                  <li>安排护理员站位形成法阵</li>
+                  <li>成功可获得高额奖励，失败触发负面事件</li>
+                </ul>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={onClose}
+                  className="flex-1 py-2 rounded-lg border-2 border-clinic-border/60 text-gray-600 hover:bg-white/80 transition-colors text-sm"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleStartRitual}
+                  disabled={!canStartRitual}
+                  className="flex-1 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 text-white flex items-center justify-center gap-1.5 disabled:!bg-gray-300 text-sm font-medium hover:from-purple-700 hover:to-indigo-700 transition-all shadow-md"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  准备祛咒仪式
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

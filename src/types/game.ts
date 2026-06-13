@@ -152,3 +152,60 @@ export interface Notification {
   message: string;
   timestamp: number;
 }
+
+export type RitualHour = "zi" | "chou" | "yin" | "mao" | "chen" | "si" | "wu" | "wei" | "shen" | "you" | "xu" | "hai";
+
+export type StaffPosition = "north" | "south" | "east" | "west" | "center";
+
+export interface CurseSymbol {
+  id: string;
+  name: string;
+  emoji: string;
+  description: string;
+  element: "light" | "dark" | "fire" | "water" | "earth";
+  rarity: 1 | 2 | 3;
+}
+
+export interface NegativeEvent {
+  id: string;
+  name: string;
+  description: string;
+  effect: {
+    money?: number;
+    reputation?: number;
+    inventoryLoss?: Record<string, number>;
+    bedDisable?: string[];
+    allBedDisableHours?: number;
+  };
+}
+
+export interface CurseRitualState {
+  isActive: boolean;
+  beastId: string | null;
+  bedId: string | null;
+  selectedSymbols: string[];
+  selectedHour: RitualHour | null;
+  staffPositions: Record<string, StaffPosition>;
+  progress: number;
+  total: number;
+  result: "pending" | "success" | "fail";
+  startedAt: number | null;
+}
+
+export interface MedicalRecord {
+  id: string;
+  beastId: string;
+  breedId: string;
+  beastName: string;
+  date: string;
+  disease: DiseaseType;
+  severity: Severity;
+  prescriptions: string[];
+  success: boolean;
+  revenue: number;
+  daysToHeal: number;
+  evolved: boolean;
+  notes: string;
+  curseSymbolId?: string;
+  isCurseSuppressed?: boolean;
+}

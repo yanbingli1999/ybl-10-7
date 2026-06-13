@@ -438,3 +438,158 @@ export const NOTES_FAIL = [
   "只得转往大城市的高级诊所求治。",
   "灵兽对这里产生了阴影，不愿再踏入半步。",
 ];
+
+export const CURSE_SYMPTOMS_EXTRA = [
+  "皮肤浮现诡异符文",
+  "眼中闪烁异光",
+  "周围物品无故移动",
+  "夜间低语不断",
+  "影子自行活动",
+];
+
+import type { CurseSymbol, RitualHour, NegativeEvent } from "@/types/game";
+
+export const CURSE_SYMBOLS: CurseSymbol[] = [
+  {
+    id: "symbol_sun",
+    name: "烈阳符",
+    emoji: "☀️",
+    description: "至阳至刚，可驱散阴邪。",
+    element: "light",
+    rarity: 2,
+  },
+  {
+    id: "symbol_moon",
+    name: "月华符",
+    emoji: "🌙",
+    description: "柔和月光，净化怨念。",
+    element: "light",
+    rarity: 2,
+  },
+  {
+    id: "symbol_star",
+    name: "七星符",
+    emoji: "⭐",
+    description: "北斗七星，指引正道。",
+    element: "light",
+    rarity: 3,
+  },
+  {
+    id: "symbol_fire",
+    name: "业火符",
+    emoji: "🔥",
+    description: "焚尽邪祟，不留后患。",
+    element: "fire",
+    rarity: 2,
+  },
+  {
+    id: "symbol_water",
+    name: "净水符",
+    emoji: "💧",
+    description: "清净之水，洗涤污秽。",
+    element: "water",
+    rarity: 1,
+  },
+  {
+    id: "symbol_earth",
+    name: "镇地符",
+    emoji: "🪨",
+    description: "厚重大地，镇压邪灵。",
+    element: "earth",
+    rarity: 2,
+  },
+  {
+    id: "symbol_void",
+    name: "虚空符",
+    emoji: "🕳️",
+    description: "将诅咒送入虚空裂隙。",
+    element: "dark",
+    rarity: 3,
+  },
+  {
+    id: "symbol_sword",
+    name: "斩邪符",
+    emoji: "⚔️",
+    description: "锋利剑气，斩断咒缚。",
+    element: "light",
+    rarity: 2,
+  },
+  {
+    id: "symbol_shield",
+    name: "护体符",
+    emoji: "🛡️",
+    description: "保护仪式免受反噬。",
+    element: "earth",
+    rarity: 1,
+  },
+];
+
+export const RITUAL_HOURS: Record<RitualHour, { name: string; hour: number; element: string; bonus: number }> = {
+  zi: { name: "子时", hour: 0, element: "water", bonus: 10 },
+  chou: { name: "丑时", hour: 2, element: "earth", bonus: 5 },
+  yin: { name: "寅时", hour: 4, element: "wood", bonus: 5 },
+  mao: { name: "卯时", hour: 6, element: "wood", bonus: 0 },
+  chen: { name: "辰时", hour: 8, element: "earth", bonus: 0 },
+  si: { name: "巳时", hour: 10, element: "fire", bonus: 5 },
+  wu: { name: "午时", hour: 12, element: "fire", bonus: 15 },
+  wei: { name: "未时", hour: 14, element: "earth", bonus: 5 },
+  shen: { name: "申时", hour: 16, element: "light", bonus: 10 },
+  you: { name: "酉时", hour: 18, element: "light", bonus: 10 },
+  xu: { name: "戌时", hour: 20, element: "earth", bonus: 0 },
+  hai: { name: "亥时", hour: 22, element: "water", bonus: 15 },
+};
+
+export const STAFF_POSITIONS: Record<string, { name: string; emoji: string; bonus: number }> = {
+  north: { name: "北位·玄武", emoji: "🐢", bonus: 5 },
+  south: { name: "南位·朱雀", emoji: "🦅", bonus: 5 },
+  east: { name: "东位·青龙", emoji: "🐉", bonus: 5 },
+  west: { name: "西位·白虎", emoji: "🐅", bonus: 5 },
+  center: { name: "中位·镇守", emoji: "⛩️", bonus: 10 },
+};
+
+export const NEGATIVE_EVENTS: NegativeEvent[] = [
+  {
+    id: "event_money_loss",
+    name: "财物损失",
+    description: "诊所钱财被邪祟卷走一部分。",
+    effect: { money: -100 },
+  },
+  {
+    id: "event_reputation_loss",
+    name: "流言蜚语",
+    description: "关于诊所闹鬼的流言传开，声望下降。",
+    effect: { reputation: -15 },
+  },
+  {
+    id: "event_herb_spoilage",
+    name: "药材损毁",
+    description: "部分药材被邪祟污染，无法使用。",
+    effect: { inventoryLoss: { herb_pure: 2, herb_light: 2 } },
+  },
+  {
+    id: "event_bed_curse",
+    name: "病床受污",
+    description: "病床沾染邪气，需要清洁后才能使用。",
+    effect: { allBedDisableHours: 3 },
+  },
+  {
+    id: "event_major_loss",
+    name: "大凶之兆",
+    description: "严重的诅咒反噬，诊所损失惨重。",
+    effect: { money: -200, reputation: -20 },
+  },
+  {
+    id: "event_energy_drain",
+    name: "灵气外泄",
+    description: "诊所灵气被邪气吞噬，采购成本增加。",
+    effect: { money: -80, reputation: -8 },
+  },
+];
+
+export const CURSE_RITUAL_REQUIREMENT = {
+  minSymbols: 2,
+  maxSymbols: 4,
+  requiredHerbs: ["herb_light", "herb_pure", "herb_fire"],
+  baseSuccessRate: 60,
+  ritualHours: 6,
+};

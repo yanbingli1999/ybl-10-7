@@ -13,6 +13,9 @@ export function BedGrid({ onBedClick }: BedGridProps) {
   const selectedBedId = useGameStore(s => s.selectedBedId);
   const selectBed = useGameStore(s => s.selectBed);
   const collectFromBed = useGameStore(s => s.collectFromBed);
+  const bedDisabledUntil = useGameStore(s => s.bedDisabledUntil);
+  const currentTime = useGameStore(s => s.currentTime);
+  const curseRitual = useGameStore(s => s.curseRitual);
 
   return (
     <div className="card p-4">
@@ -39,11 +42,16 @@ export function BedGrid({ onBedClick }: BedGridProps) {
 
           const resolved = bed.result !== "pending";
           const isSuccess = bed.result === "success";
+          const isDisabled = bedDisabledUntil[bed.id] && bedDisabledUntil[bed.id] > currentTime;
+          const isRitualBed = curseRitual.isActive && curseRitual.bedId === bed.id;
+
+          const disabledRemaining = isDisabled ? Math.ceil(bedDisabledUntil[bed.id] - currentTime) : 0;
 
           return (
             <div
               key={bed.id}
               onClick={() => {
+                if (isDisabled) return;
                 if (isEmpty) {
                   selectBed(isSelected ? null : bed.id);
                   onBedClick(bed);
@@ -55,7 +63,11 @@ export function BedGrid({ onBedClick }: BedGridProps) {
                 }
               }}
               className={`relative rounded-xl border-2 p-3 cursor-pointer transition-all duration-200 bg-gradient-to-br ${
-                isEmpty
+                isDisabled
+                  ? "from-gray-200 to-gray-300 border-gray-400 cursor-not-allowed opacity-60"
+                  : isRitualBed
+                  ? "from-purple-50 to-indigo-50 border-purple-400 animate-pulse"
+                  : isEmpty
                   ? "from-gray-50 to-gray-100 border-dashed border-gray-300 hover:border-clinic-jade/60 hover:from-clinic-jade/5"
                   : snapshot
                   ? `from-white to-clinic-bg border-2 ${SEVERITY_BORDER[snapshot.severity]} ${
@@ -84,7 +96,25 @@ export function BedGrid({ onBedClick }: BedGridProps) {
                 )}
               </div>
 
-              {isEmpty ? (
+              {isDisabled ? (
+                <div className="flex flex-col items-center justify-center py-6 text-gray-500">
+                  <div className="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center mb-1">
+                    <span className="text-2xl">💀</span>
+                  </div>
+                  <p className="text-xs font-medium">邪气污染</p>
+                  <p className="text-[10px] opacity-70 mt-1">
+                    剩余 {disabledRemaining} 小时净化
+                  </p>
+                </div>
+              ) : isRitualBed ? (
+                <div className="flex flex-col items-center justify-center py-6 text-purple-700">
+                  <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center mb-1 animate-pulse">
+                    <span className="text-2xl">✨</span>
+                  </div>
+                  <p className="text-xs font-medium">祛咒仪式准备中</p>
+                  <p className="text-[10px] opacity-70 mt-1">点击配置仪式</p>
+                </div>
+              ) : isEmpty ? (
                 <div className="flex flex-col items-center justify-center py-6 text-gray-400">
                   <div className="w-12 h-12 rounded-full bg-white/60 flex items-center justify-center mb-1">
                     <BedDouble className="w-6 h-6" />

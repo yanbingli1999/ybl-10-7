@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
-import { BookOpen, Heart, Star, Award, FileText, ChevronDown, ChevronUp } from "lucide-react";
+import { BookOpen, Heart, Star, Award, FileText, ChevronDown, ChevronUp, Sparkles, Download } from "lucide-react";
 import { useGameStore } from "@/store/gameStore";
-import { BREEDS, DISEASE_NAMES, SEVERITY_NAMES, HERBS } from "@/data/gameData";
+import { BREEDS, DISEASE_NAMES, SEVERITY_NAMES, HERBS, CURSE_SYMBOLS } from "@/data/gameData";
 import { ELEMENT_EMOJI, ELEMENT_NAMES } from "@/data/gameData";
 
 export default function ArchivePage() {
@@ -9,6 +9,8 @@ export default function ArchivePage() {
   const relationships = useGameStore(s => s.beastRelationships);
   const records = useGameStore(s => s.medicalRecords);
   const reputation = useGameStore(s => s.reputation);
+  const collectedSymbols = useGameStore(s => s.collectedSymbols);
+  const collectCurseSymbol = useGameStore(s => s.collectCurseSymbol);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const totalCured = records.filter(r => r.success).length;
@@ -42,6 +44,43 @@ export default function ArchivePage() {
           </div>
         ))}
       </div>
+
+      {collectedSymbols.length > 0 && (
+        <div className="card p-4 bg-gradient-to-br from-purple-50 to-indigo-50 border-purple-200">
+          <h3 className="font-display text-lg text-purple-800 flex items-center gap-2 mb-3">
+            <Sparkles className="w-5 h-5 text-purple-500" />
+            已收集的异常符号
+            <span className="ml-auto text-sm font-normal text-gray-500">
+              共 {collectedSymbols.length}/{CURSE_SYMBOLS.length} 个
+            </span>
+          </h3>
+          <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-9 gap-2">
+            {CURSE_SYMBOLS.map(sym => {
+              const collected = collectedSymbols.includes(sym.id);
+              return (
+                <div
+                  key={sym.id}
+                  className={`p-2 rounded-lg border-2 text-center transition-all ${
+                    collected
+                      ? "border-purple-400 bg-white shadow-sm"
+                      : "border-gray-200 bg-gray-50 opacity-40"
+                  }`}
+                >
+                  <div className="text-2xl mb-0.5" style={{ filter: collected ? "none" : "grayscale(1)" }}>
+                    {collected ? sym.emoji : "❓"}
+                  </div>
+                  <div className="text-[10px] font-medium text-clinic-deep">
+                    {collected ? sym.name : "???"}
+                  </div>
+                  <div className="text-[9px] text-gray-500">
+                    {"⭐".repeat(sym.rarity)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="card p-5">
         <h2 className="font-display text-xl text-clinic-deep flex items-center gap-2 mb-4">
@@ -200,6 +239,42 @@ export default function ArchivePage() {
                           <div className="text-clinic-deep italic">「{r.notes}」</div>
                         </div>
                       </div>
+
+                      {r.curseSymbolId && (
+                        <div className="mt-2 p-3 rounded-lg bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200">
+                          <div className="flex items-center gap-3">
+                            <div className="text-3xl">
+                              {CURSE_SYMBOLS.find(s => s.id === r.curseSymbolId)?.emoji}
+                            </div>
+                            <div className="flex-1">
+                              <div className="text-sm font-semibold text-purple-800 flex items-center gap-1">
+                                <Sparkles className="w-3.5 h-3.5" />
+                                发现异常符号：{CURSE_SYMBOLS.find(s => s.id === r.curseSymbolId)?.name}
+                              </div>
+                              <div className="text-[10px] text-gray-600 mt-0.5">
+                                {CURSE_SYMBOLS.find(s => s.id === r.curseSymbolId)?.description}
+                              </div>
+                              <div className="text-[10px] text-gray-500 mt-0.5">
+                                稀有度：{"⭐".repeat(CURSE_SYMBOLS.find(s => s.id === r.curseSymbolId)?.rarity || 1)}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => collectCurseSymbol(r.curseSymbolId!, r.id)}
+                              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-500 to-indigo-500 text-white text-[11px] font-medium flex items-center gap-1 hover:from-purple-600 hover:to-indigo-600 transition-all shadow-sm"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              收集符号
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {r.isCurseSuppressed && (
+                        <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800 flex items-center gap-2">
+                          <span className="text-lg">⚠️</span>
+                          <span>此为咒怨症压制治疗记录，需进行祛咒仪式才能彻底根治。</span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
