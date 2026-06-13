@@ -90,6 +90,7 @@ export interface Bed {
   currentPrescriptionHerbs: string[];
   playerDiagnosis: DiseaseType | null;
   startedAt: number | null;
+  isCurseSuppression: boolean;
   beastSnapshot: {
     id: string;
     breedId: string;

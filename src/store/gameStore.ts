@@ -188,6 +188,7 @@ function createInitialBeds(): Bed[] {
     currentPrescriptionHerbs: [],
     playerDiagnosis: null,
     startedAt: null,
+    isCurseSuppression: false,
     beastSnapshot: null,
   }));
 }
@@ -354,6 +355,7 @@ export const useGameStore = create<GameState>()(
           currentPrescriptionHerbs: [...herbIds],
           playerDiagnosis,
           startedAt: s.currentTime,
+          isCurseSuppression: false,
           beastSnapshot: {
             id: beast.id,
             breedId: beast.breedId,
@@ -426,6 +428,7 @@ export const useGameStore = create<GameState>()(
           currentPrescriptionHerbs: [...herbIds],
           playerDiagnosis,
           startedAt: s.currentTime,
+          isCurseSuppression: true,
           beastSnapshot: {
             id: beast.id,
             breedId: beast.breedId,
@@ -551,6 +554,7 @@ export const useGameStore = create<GameState>()(
           currentPrescriptionHerbs: requiredHerbs,
           playerDiagnosis: "curse" as DiseaseType,
           startedAt: s.currentTime,
+          isCurseSuppression: false,
           beastSnapshot: queueBeast ? {
             id: queueBeast.id,
             breedId: queueBeast.breedId,
@@ -683,6 +687,7 @@ export const useGameStore = create<GameState>()(
           currentPrescriptionHerbs: [],
           playerDiagnosis: null,
           startedAt: null,
+          isCurseSuppression: false,
           beastSnapshot: null,
         } : b);
         const newStaff = s.staff.map(st =>
@@ -731,8 +736,9 @@ export const useGameStore = create<GameState>()(
           }
         }
         if (effect.allBedDisableHours) {
+          const currentAbsoluteHour = s.currentDay * 24 + s.currentTime;
           s.beds.forEach(b => {
-            newBedDisabled[b.id] = s.currentTime + effect.allBedDisableHours!;
+            newBedDisabled[b.id] = currentAbsoluteHour + effect.allBedDisableHours!;
           });
         }
 
@@ -755,6 +761,34 @@ export const useGameStore = create<GameState>()(
         const bed = s.beds.find(b => b.id === bedId);
         if (!bed || bed.result === "pending" || !bed.beastSnapshot) return;
         const beast = bed.beastSnapshot;
+
+        // 咒怨症压制治疗：不产生诊金，直接释放床位即可（病历已在assignBedAndSuppressCurse中创建）
+        if (bed.isCurseSuppression) {
+          const newBeds = s.beds.map(b => b.id === bedId ? {
+            ...b,
+            status: "empty" as const,
+            assignedBeastId: null,
+            assignedStaffId: null,
+            treatmentProgress: 0,
+            treatmentTotal: 0,
+            result: "pending" as const,
+            currentPrescriptionHerbs: [],
+            playerDiagnosis: null,
+            startedAt: null,
+            isCurseSuppression: false,
+            beastSnapshot: null,
+          } : b);
+          const newStaff = s.staff.map(st =>
+            st.id === bed.assignedStaffId ? { ...st, status: "idle" as const, assignedBedId: null } : st
+          );
+          set(st => ({
+            beds: newBeds,
+            staff: newStaff,
+            selectedBedId: null,
+          }));
+          s.addNotification("info", `${beast.name} 咒怨压制完成！请从病历中收集异常符号，随后可进行祛咒仪式。`);
+          return;
+        }
 
         const bedBeastId = bed.assignedBeastId;
         const treatmentHerbs = bed.currentPrescriptionHerbs;
@@ -875,6 +909,7 @@ export const useGameStore = create<GameState>()(
           currentPrescriptionHerbs: [],
           playerDiagnosis: null,
           startedAt: null,
+          isCurseSuppression: false,
           beastSnapshot: null,
         } : b);
         const staffToRelease = bed.assignedStaffId;
@@ -965,11 +1000,12 @@ export const useGameStore = create<GameState>()(
           state.reputation = Math.max(0, state.reputation - repLossQueue);
 
           // 2. 治疗进度
+          const absoluteHour = state.currentDay * 24 + newTime;
           const newBeds = state.beds.map(b => {
             if (b.status !== "occupied" || b.result !== "pending") return b;
 
-            // 检查床位是否被禁用
-            if (state.bedDisabledUntil[b.id] && state.bedDisabledUntil[b.id] > state.currentTime) {
+            // 检查床位是否被禁用（使用绝对时间戳）
+            if (state.bedDisabledUntil[b.id] && state.bedDisabledUntil[b.id] > absoluteHour) {
               return b;
             }
 
@@ -1053,10 +1089,11 @@ export const useGameStore = create<GameState>()(
           });
           state.beds = newBeds;
 
-          // 2.5 床位禁用恢复检查
+          // 2.5 床位禁用恢复检查（使用绝对时间戳）
+          const absoluteHourForCheck = state.currentDay * 24 + newTime;
           const newBedDisabled = { ...state.bedDisabledUntil };
           for (const [bedId, until] of Object.entries(newBedDisabled)) {
-            if (until <= state.currentTime) {
+            if (until <= absoluteHourForCheck) {
               delete newBedDisabled[bedId];
             }
           }

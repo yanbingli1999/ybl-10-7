@@ -15,6 +15,7 @@ export function BedGrid({ onBedClick }: BedGridProps) {
   const collectFromBed = useGameStore(s => s.collectFromBed);
   const bedDisabledUntil = useGameStore(s => s.bedDisabledUntil);
   const currentTime = useGameStore(s => s.currentTime);
+  const currentDay = useGameStore(s => s.currentDay);
   const curseRitual = useGameStore(s => s.curseRitual);
 
   return (
@@ -42,10 +43,11 @@ export function BedGrid({ onBedClick }: BedGridProps) {
 
           const resolved = bed.result !== "pending";
           const isSuccess = bed.result === "success";
-          const isDisabled = bedDisabledUntil[bed.id] && bedDisabledUntil[bed.id] > currentTime;
+          const absoluteHour = currentDay * 24 + currentTime;
+          const isDisabled = bedDisabledUntil[bed.id] && bedDisabledUntil[bed.id] > absoluteHour;
           const isRitualBed = curseRitual.isActive && curseRitual.bedId === bed.id;
 
-          const disabledRemaining = isDisabled ? Math.ceil(bedDisabledUntil[bed.id] - currentTime) : 0;
+          const disabledRemaining = isDisabled ? Math.ceil(bedDisabledUntil[bed.id] - absoluteHour) : 0;
 
           return (
             <div
